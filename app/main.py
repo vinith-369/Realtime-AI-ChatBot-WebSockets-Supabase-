@@ -149,6 +149,8 @@ async def websocket_session(websocket: WebSocket, session_id: str):
     existing_session = await get_session(session_uuid)
     session_manager = SessionManager(session_uuid)
     start_time = datetime.utcnow()
+    session_created = existing_session is not None
+    agent = None
     
     try:
         if websocket.client_state != WebSocketState.CONNECTED:
@@ -158,11 +160,7 @@ async def websocket_session(websocket: WebSocket, session_id: str):
         if existing_session:
             await session_manager.resume_session()
             logger.info(f"Resumed existing session: {session_id}")
-        else:
-            await session_manager.start_session()
-            logger.info(f"Started new session: {session_id}")
-        
-        agent = ConversationAgent(session_uuid)
+            agent = ConversationAgent(session_uuid)
         
         while True:
             try:
@@ -176,6 +174,12 @@ async def websocket_session(websocket: WebSocket, session_id: str):
                 user_input = message.get("content", "").strip()
                 if not user_input:
                     continue
+                
+                if not session_created:
+                    await session_manager.start_session()
+                    session_created = True
+                    agent = ConversationAgent(session_uuid)
+                    logger.info(f"Created session on first message: {session_id}")
                 
                 await session_manager.log_user_input(user_input)
                 
@@ -248,7 +252,8 @@ async def websocket_session(websocket: WebSocket, session_id: str):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
-        await schedule_post_processing(session_uuid, start_time)
+        if session_created:
+            await schedule_post_processing(session_uuid, start_time)
         
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.close()
